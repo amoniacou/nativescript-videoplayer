@@ -1,6 +1,8 @@
 /// <reference path="./node_modules/tns-platform-declarations/ios.d.ts" />
 
 import * as application from 'tns-core-modules/application';
+import * as utils from "tns-core-modules/utils/utils";
+
 import { CLog, CLogTypes, headersProperty, VideoCommon, videoSourceProperty } from './videoplayer-common';
 
 declare const NSMutableDictionary;
@@ -14,6 +16,7 @@ export class Video extends VideoCommon {
   private _didPlayToEndTimeActive: boolean;
   private _observer: NSObject;
   private _observerActive: boolean;
+  private _observerPlayerActive: boolean;
   private _playbackTimeObserver: any;
   private _playbackTimeObserverActive: boolean;
   private _videoPlaying: boolean;
@@ -37,6 +40,7 @@ export class Video extends VideoCommon {
     CLog(CLogTypes.info, 'this._observer', this._observer);
     this._observer['_owner'] = this;
     (this._observer as any).owner = this;
+    this._addPlayerObserver(this.player);
   }
 
   get ios(): any {
@@ -79,7 +83,8 @@ export class Video extends VideoCommon {
         AVURLAssetHTTPHeaderFieldsKey: this._headers
       });
       const asset: AVURLAsset = AVURLAsset.alloc().initWithURLOptions(url, options);
-      const item: AVPlayerItem = AVPlayerItem.playerItemWithAsset(asset);
+      const arr = utils.ios.collections.jsArrayToNSArray(["rate", "currentItem", "status"]);
+      const item: AVPlayerItem = AVPlayerItem.playerItemWithAssetAutomaticallyLoadedAssetKeys(asset, arr);
       nativeVideoPlayer = item;
     }
 
@@ -104,7 +109,8 @@ export class Video extends VideoCommon {
 
   public updateAsset(nativeVideoAsset: AVAsset) {
     CLog(CLogTypes.info, 'Video.updateAsset ---', `nativeVideoAsset: ${nativeVideoAsset}`);
-    const newPlayerItem = AVPlayerItem.playerItemWithAsset(nativeVideoAsset);
+    const arr = utils.ios.collections.jsArrayToNSArray(["rate", "currentItem", "status"]);
+    const newPlayerItem = AVPlayerItem.playerItemWithAssetAutomaticallyLoadedAssetKeys(nativeVideoAsset, arr);
     this._setNativeVideo(newPlayerItem);
   }
 
@@ -261,10 +267,22 @@ export class Video extends VideoCommon {
     currentItem.addObserverForKeyPathOptionsContext(this._observer, 'status', 0, null);
   }
 
+  private _addPlayerObserver(player) {
+    CLog(CLogTypes.info, 'Video._addPlayerStatusObserver ---', `player: ${player}`);
+    this._observerPlayerActive = true;
+    player.addObserverForKeyPathOptionsContext(this._observer, 'rate', NSKeyValueObservingOptions.Old | NSKeyValueObservingOptions.New, null);
+  }
+
   private _removeStatusObserver(currentItem) {
     CLog(CLogTypes.info, 'Video._removeStatusObserver ---', `currentItem: ${currentItem}`);
     this._observerActive = false;
     currentItem.removeObserverForKeyPath(this._observer, 'status');
+  }
+
+  private _removePlayerObserver(player) {
+    CLog(CLogTypes.info, 'Video._removePlayerObserver ---', `currentItem: ${player}`);
+    this._observerPlayerActive = false;
+    player.removeObserverForKeyPath(this._observer, 'status');
   }
 
   private _addPlaybackTimeObserver() {
@@ -371,6 +389,15 @@ class PlayerObserverClass extends NSObject {
 
       if (owner.player && owner.player.currentItem.status === AVPlayerItemStatus.ReadyToPlay && !owner.videoLoaded) {
         owner.playbackReady();
+      }
+    }
+    if (path === 'rate') {
+      const owner = (this as any).owner as Video;
+      if (owner.player && change.valueForKey('new') === 1 && change.valueForKey('old') === 0) {
+        owner.sendEvent(VideoCommon.playbackStartEvent);
+      }
+      if (owner.player && change.valueForKey('new') === 0 && change.valueForKey('old') === 1) {
+        owner.sendEvent(VideoCommon.pausedEvent);
       }
     }
   }
